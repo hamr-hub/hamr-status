@@ -49,3 +49,7 @@ out/
 .env.test.local
 .env.production.local
 .env.*.local
+
+# Antigravity CLI and Scratch
+.gemini/
+scratch/
