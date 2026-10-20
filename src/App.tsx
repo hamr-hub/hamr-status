@@ -1,9 +1,10 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import {
   CheckCircle, AlertTriangle, XCircle, Clock, RefreshCw,
   Activity, Globe, Shield, Database, Zap, Home, FileText,
   BookOpen, Code2, Server
 } from 'lucide-react'
+import { buildUptimeSlots, type UptimeSlot } from './utils/uptime'
 
 type ServiceStatus = 'operational' | 'degraded' | 'partial' | 'down' | 'maintenance'
 
@@ -77,18 +78,57 @@ function StatusBadge({ status }: { status: ServiceStatus }) {
   )
 }
 
-function UptimeBar({ uptime }: { uptime: number }) {
-  const bars = 90
+interface UptimeBarProps {
+  /** 聚合可用率（0..100） */
+  uptime: number
+  /** 服务标识，用于派生确定性种子 */
+  serviceId: string
+  /** 真实历史（可选）：每项为 0=正常 1=降级 2=故障 */
+  history?: UptimeSlot[]
+}
+
+/**
+ * 90 天可用率柱状条。
+ *
+ * 早期实现用 `Math.random()` 逐根掷骰子决定颜色，结果是每次刷新页面
+ * 90 根柱子都会重新洗牌 —— 用户刷新两次就会发现状态页是假的
+ * （proposed-fixes-v2 #04，P0 公信力缺陷）。
+ *
+ * 现在改为**确定性**渲染：
+ * - 拿到真实历史（history）时按真实状态着色；
+ * - 没有历史时，用「服务 id」派生的确定性伪随机值生成，保证同一服务
+ *   每次渲染完全一致，不同服务之间分布又各不相同。
+ *
+ * 确定性逻辑见 `src/utils/uptime.ts`，由
+ * `scripts/verify-uptime-determinism.mjs` 守护。
+ *
+ * 注意：在接入真实的 Prometheus 历史查询之前，这些柱子只是基于聚合
+ * 可用率的**示意分布**，界面上已明确标注，不可当作真实历史采样。
+ */
+function UptimeBar({ uptime, serviceId, history }: UptimeBarProps) {
+  const bars = history?.length ?? 90
+
+  const slots = useMemo<UptimeSlot[]>(
+    () => buildUptimeSlots(serviceId, uptime, bars, history),
+    [uptime, serviceId, history, bars],
+  )
+
+  const slotStyle: Record<UptimeSlot, { cls: string; h: string; text: string }> = {
+    0: { cls: 'bg-green-400', h: '16px', text: '正常' },
+    1: { cls: 'bg-yellow-400', h: '12px', text: '降级' },
+    2: { cls: 'bg-red-400', h: '8px', text: '故障' },
+  }
+
   return (
     <div className="flex gap-0.5 items-end">
-      {Array.from({ length: bars }).map((_, i) => {
-        const isDown = Math.random() < (1 - uptime / 100) * 0.3
+      {slots.map((slot, i) => {
+        const s = slotStyle[slot]
         return (
           <div
             key={i}
-            className={`w-1 rounded-sm ${isDown ? 'bg-red-400' : 'bg-green-400'}`}
-            style={{ height: isDown ? '8px' : '16px' }}
-            title={isDown ? '故障' : '正常'}
+            className={`w-1 rounded-sm ${s.cls}`}
+            style={{ height: s.h }}
+            title={`${bars - i - 1} 天前：${s.text}`}
           />
         )
       })}
@@ -220,8 +260,11 @@ export default function App() {
                   </div>
                   <div className="flex items-center gap-6 shrink-0">
                     <div className="hidden sm:block">
-                      <UptimeBar uptime={svc.uptime_30d} />
-                      <div className="text-xs text-gray-400 mt-1 text-right">{svc.uptime_30d}% / 90天</div>
+                      <UptimeBar uptime={svc.uptime_30d} serviceId={svc.id} />
+                      <div className="text-xs text-gray-400 mt-1 text-right">
+                        {svc.uptime_30d}% / 90天
+                        <span className="text-gray-300">（示意分布）</span>
+                      </div>
                     </div>
                     {svc.response_ms > 0 && (
                       <div className="text-right hidden md:block">
