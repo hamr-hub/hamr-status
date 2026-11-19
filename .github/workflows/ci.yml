@@ -1,0 +1,52 @@
+name: CI
+
+# hamr-status CI 门禁（v0.2 路线图 阶段 C / C1，2026-11-19 接入）
+#
+# 本仓库没有单元测试框架，回归依赖两部分：
+#   1. ESLint + tsc/vite build
+#   2. scripts/verify-uptime-determinism.mjs —— 状态页可用率柱状条的
+#      确定性回归（旧实现用 Math.random() 逐根掷骰子，刷新即洗牌，
+#      状态页因此失去公信力）。
+#
+# 注意：verify 脚本通过 Node 原生 TypeScript 支持直接 import '../src/utils/uptime.ts'，
+# 无需测试框架，但要求 Node ≥ 24（22.x 需要 --experimental-strip-types）。
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# 同一分支的新 push 不取消正在跑的旧 run，失败时便于回看
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  ci:
+    name: lint / determinism / build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Uptime determinism regression
+        run: node scripts/verify-uptime-determinism.mjs
+
+      - name: Build
+        run: npm run build
